@@ -1,6 +1,8 @@
 import random
 import asyncio
+import os
 import re
+from datetime import datetime
 from typing import Optional, Dict, Any
 from playwright.async_api import Page
 from config import Config
@@ -17,12 +19,13 @@ def parse_number(text: Optional[str]) -> Optional[int]:
 
 class EasyTraderAutomation:
     """
-    Manages interactions, symbol verification, and order placement on Mofid EasyTrader
-    Optimized based on EasyTrader's DOM structure and data-cy attributes.
+    Manages interactions, symbol monitoring, data logging, and order execution
+    on Mofid EasyTrader based on verified DOM attributes.
     """
     def __init__(self, page: Page, config: Config):
         self.page = page
         self.config = config
+        self.last_saved_symbol: Optional[str] = None
 
     async def human_delay(self, min_factor: float = 1.0, max_factor: float = 1.0):
         """Introduce randomized delay to emulate human behavior"""
@@ -67,9 +70,10 @@ class EasyTraderAutomation:
         print("[*] Checking user authentication state...")
         logged_in_selectors = [
             "[data-cy='symbol-header-symbol-name']",
+            "[data-cy='order-form-header-symbol-name']",
             "[data-cy='order-buy-btn']",
             "[data-cy='market-depth-best-limit']",
-            "[data-cy='symbol-header-last-span']"
+            "[data-cy='order-list-clock']"
         ]
         
         is_logged_in = False
@@ -99,15 +103,36 @@ class EasyTraderAutomation:
 
         print("[✓] User login confirmed successfully.")
 
+    async def get_server_clock(self) -> Optional[str]:
+        """Read EasyTrader server clock (#easy-clock-id)"""
+        clock_selectors = ["#easy-clock-id", "[data-cy='order-list-clock'] span"]
+        for sel in clock_selectors:
+            try:
+                elem = await self.page.query_selector(sel)
+                if elem:
+                    text = await elem.inner_text()
+                    if text and text.strip():
+                        return text.strip()
+            except Exception:
+                pass
+        return None
+
     async def get_active_symbol_name(self) -> Optional[str]:
-        """Read currently active symbol from symbol-header-symbol-name element"""
-        try:
-            elem = await self.page.query_selector("[data-cy='symbol-header-symbol-name']")
-            if elem:
-                text = await elem.inner_text()
-                return text.strip()
-        except Exception:
-            pass
+        """Read currently active symbol name from header or order form"""
+        selectors = [
+            "[data-cy='symbol-header-symbol-name']",
+            "[data-cy='order-form-header-symbol-name']"
+        ]
+        for sel in selectors:
+            try:
+                elem = await self.page.query_selector(sel)
+                if elem:
+                    text = await elem.inner_text()
+                    clean = text.strip()
+                    if clean:
+                        return clean
+            except Exception:
+                pass
         return None
 
     async def get_symbol_state(self) -> Optional[str]:
@@ -123,14 +148,13 @@ class EasyTraderAutomation:
 
     async def get_price_thresholds(self) -> Dict[str, Optional[int]]:
         """
-        Extract daily floor and ceiling prices from candle chart (symbol-detail-candle)
+        Extract daily floor and ceiling prices from candle chart and order form buttons
         minPrice -> Daily Floor
-        maxPrice -> Daily Ceiling (Required for queuing / سرخطی)
-        prevPrice -> Previous Close
-        lastPrice -> Last Traded Price
+        maxPrice -> Daily Ceiling
         """
         prices = {"min": None, "max": None, "prev": None, "last": None, "closing": None}
         
+        # 1. From candle chart
         try:
             max_elem = await self.page.query_selector("[data-cy='symbol-detail-candle-max-price']")
             if max_elem:
@@ -152,7 +176,24 @@ class EasyTraderAutomation:
             if closing_elem:
                 prices["closing"] = parse_number(await closing_elem.inner_text())
         except Exception as e:
-            print(f"[!] Error reading price limits: {e}")
+            print(f"[!] Error reading candle prices: {e}")
+
+        # 2. Fallback or cross-check from order form max/min price buttons if open
+        if not prices["max"]:
+            try:
+                form_max_elem = await self.page.query_selector("[data-cy='order-form-max-price'] span")
+                if form_max_elem:
+                    prices["max"] = parse_number(await form_max_elem.inner_text())
+            except Exception:
+                pass
+
+        if not prices["min"]:
+            try:
+                form_min_elem = await self.page.query_selector("[data-cy='order-form-min-price'] span")
+                if form_min_elem:
+                    prices["min"] = parse_number(await form_min_elem.inner_text())
+            except Exception:
+                pass
 
         return prices
 
@@ -190,21 +231,103 @@ class EasyTraderAutomation:
 
         return summary
 
+    async def get_user_current_asset(self) -> Optional[int]:
+        """Read user's current owned quantity/asset for this symbol"""
+        try:
+            elem = await self.page.query_selector("[data-cy='order-summary-asset']")
+            if elem:
+                return parse_number(await elem.inner_text())
+        except Exception:
+            pass
+        return None
+
+    async def save_symbol_info(self, symbol_name: Optional[str] = None) -> Optional[str]:
+        """
+        Save comprehensive details of the currently opened stock into a dedicated text file:
+        stocks_data/{symbol}.txt
+        """
+        if not symbol_name:
+            symbol_name = await self.get_active_symbol_name()
+
+        if not symbol_name:
+            return None
+
+        # Clean symbol name from extra characters
+        symbol_name = symbol_name.replace("/", "-").strip()
+
+        prices = await self.get_price_thresholds()
+        depth = await self.get_market_depth_summary()
+        state = await self.get_symbol_state() or "نامشخص"
+        server_clock = await self.get_server_clock() or "N/A"
+        user_asset = await self.get_user_current_asset()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        output_dir = self.config.storage.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, f"{symbol_name}.txt")
+
+        content = f"""============================================================
+Symbol (نماد): {symbol_name}
+Recorded At: {now_str}
+EasyTrader Server Clock: {server_clock}
+============================================================
+[Trading Status / وضعیت نماد]: {state}
+
+[Daily Price Thresholds / دامنه نوسان روزانه]:
+  • Ceiling Price (سقف قیمت مجاز): {prices['max'] if prices['max'] is not None else 'N/A'}
+  • Floor Price   (کف قیمت مجاز):  {prices['min'] if prices['min'] is not None else 'N/A'}
+  • Prev Close    (پایانی دیروز):  {prices['prev'] if prices['prev'] is not None else 'N/A'}
+  • Last Traded   (آخرین معامله):  {prices['last'] if prices['last'] is not None else 'N/A'}
+  • Closing Price (قیمت پایانی):   {prices['closing'] if prices['closing'] is not None else 'N/A'}
+
+[Market Depth & Queues / اطلاعات صف و مظنه]:
+  • Buy Queue (صف خرید):
+      - Best Limit Price: {depth['best_buy_price'] if depth['best_buy_price'] is not None else 'N/A'}
+      - Total Volume:     {depth['total_buy_volume'] if depth['total_buy_volume'] is not None else 'N/A'}
+      - Total Orders:     {depth['total_buy_count'] if depth['total_buy_count'] is not None else 'N/A'}
+  • Sell Queue (صف فروش):
+      - Best Limit Price: {depth['best_sell_price'] if depth['best_sell_price'] is not None else 'N/A'}
+      - Total Volume:     {depth['total_sell_volume'] if depth['total_sell_volume'] is not None else 'N/A'}
+
+[Account Holdings / وضعیت دارایی کاربر در نماد]:
+  • Current Owned Quantity: {user_asset if user_asset is not None else 'N/A'}
+============================================================
+"""
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        print(f"[✓] Successfully saved data for symbol '{symbol_name}' to {file_path}")
+        self.last_saved_symbol = symbol_name
+        return file_path
+
+    async def watch_symbols_task(self):
+        """Background watcher: saves text file for any stock opened by the user"""
+        print("[*] Stock watcher active. Any stock opened in EasyTrader will be auto-saved to files.")
+        while True:
+            try:
+                current = await self.get_active_symbol_name()
+                if current and current != self.last_saved_symbol:
+                    # Give UI a brief moment to render depths & candle
+                    await asyncio.sleep(0.8)
+                    await self.save_symbol_info(current)
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+
     async def prepare_order(self):
         """
-        Prepare order form:
-        1. Check if target symbol is already active on screen (avoids unnecessary search delay)
-        2. Check symbol trading status (مجاز)
-        3. Extract dynamic ceiling price from candle maxPrice if configured
-        4. Click Buy/Sell button to open order panel
-        5. Populate quantity and price inputs
+        Prepare order form with verified selectors:
+        1. Check/verify active symbol
+        2. Save symbol data to text file
+        3. Open order form if closed
+        4. Populate quantity via [data-cy='order-form-input-quantity'] or #quantity
+        5. Populate price or click [data-cy='order-form-max-price'] for ceiling
         """
         target_symbol = self.config.order.symbol.strip()
         current_symbol = await self.get_active_symbol_name()
 
         print(f"[*] Target symbol: {target_symbol} | Currently active: {current_symbol}")
 
-        # Search for symbol only if not already opened
         if current_symbol != target_symbol:
             print(f"[*] Searching for symbol: {target_symbol}...")
             search_selector = "[data-cy='quick-search-input'], input[placeholder*='جستجو']"
@@ -217,61 +340,61 @@ class EasyTraderAutomation:
         else:
             print("[✓] Target symbol is already active on screen (skipping search step).")
 
+        # Save symbol info to disk
+        await self.save_symbol_info(target_symbol)
+
         # Verify trading status
         state = await self.get_symbol_state()
-        if state:
-            print(f"[*] Market trading state: {state}")
-            if state != "مجاز":
-                print(f"[!] Warning: Symbol state is '{state}' (orders might be rejected if not 'مجاز').")
+        if state and state != "مجاز":
+            print(f"[!] Warning: Symbol state is '{state}' (orders might be rejected if not 'مجاز').")
 
         # Extract price limits
         thresholds = await self.get_price_thresholds()
-        print(f"[*] Extracted daily price limits: Floor={thresholds['min']} | Ceiling={thresholds['max']} | Last={thresholds['last']}")
+        print(f"[*] Daily price limits: Floor={thresholds['min']} | Ceiling={thresholds['max']} | Last={thresholds['last']}")
 
-        # Determine price to use
-        final_price = self.config.order.price
-        if self.config.order.use_ceiling_price:
-            if thresholds["max"]:
-                final_price = thresholds["max"]
-                print(f"[✓] Daily ceiling price applied automatically: {final_price}")
-            else:
-                print("[!] Could not extract ceiling price from candle; using manual/fallback price.")
+        # Ensure order panel is opened
+        quantity_input_sel = "[data-cy='order-form-input-quantity'], #quantity"
+        form_is_open = await self.page.query_selector(quantity_input_sel)
+        if not form_is_open:
+            order_btn_selector = "button[data-cy='order-buy-btn']" if self.config.order.side == "buy" else "button[data-cy='order-sell-btn']"
+            print(f"[*] Opening order drawer via {order_btn_selector}...")
+            await self.human_click(order_btn_selector)
+            await asyncio.sleep(0.5)
 
-        # Show queue depth summary before opening order form
-        depth = await self.get_market_depth_summary()
-        if depth["total_buy_volume"]:
-            print(f"[*] Market buy queue status: Volume={depth['total_buy_volume']} | Orders={depth['total_buy_count']}")
-
-        # Click Buy or Sell button to open order drawer/form
-        order_btn_selector = "button[data-cy='order-buy-btn']" if self.config.order.side == "buy" else "button[data-cy='order-sell-btn']"
-        print(f"[*] Clicking {self.config.order.side} button ({order_btn_selector})...")
-        await self.human_click(order_btn_selector)
-
-        # Fill order volume/quantity
-        quantity_selector = "[data-cy='order-volume-input'], input[name='volume'], input[placeholder*='حجم']"
+        # Fill order volume/quantity using verified selector
         try:
-            await self.human_type(quantity_selector, str(self.config.order.quantity))
-            print(f"[✓] Order volume populated: {self.config.order.quantity}")
+            await self.human_type(quantity_input_sel, str(self.config.order.quantity))
+            print(f"[✓] Order quantity populated: {self.config.order.quantity}")
         except Exception as e:
-            print(f"[!] Volume input field not found: {e}")
+            print(f"[!] Quantity input field not found: {e}")
 
-        # Fill order price
-        if final_price > 0:
-            price_selector = "[data-cy='order-price-input'], input[name='price'], input[placeholder*='قیمت']"
-            try:
-                await self.human_type(price_selector, str(final_price))
-                print(f"[✓] Order price populated: {final_price}")
-            except Exception as e:
-                print(f"[!] Price input field not found: {e}")
+        # Set price: If use_ceiling_price is true, try clicking max-price button or type ceiling
+        if self.config.order.use_ceiling_price:
+            max_btn_sel = "[data-cy='order-form-max-price']"
+            max_btn = await self.page.query_selector(max_btn_sel)
+            if max_btn:
+                print("[*] Clicking auto max price button [data-cy='order-form-max-price']...")
+                await self.human_click(max_btn_sel)
+                print("[✓] Ceiling price selected via max price button.")
+            elif thresholds["max"]:
+                price_input_sel = "[data-cy='order-form-input-price'], #price"
+                await self.human_type(price_input_sel, str(thresholds["max"]))
+                print(f"[✓] Ceiling price populated directly: {thresholds['max']}")
+        elif self.config.order.price > 0:
+            price_input_sel = "[data-cy='order-form-input-price'], #price"
+            await self.human_type(price_input_sel, str(self.config.order.price))
+            print(f"[✓] Custom price populated: {self.config.order.price}")
 
+        # Save again to capture updated order form summary/assets
+        await self.save_symbol_info(target_symbol)
         print("[✓] Order form prepared and armed for execution at target time.")
 
     async def execute_order_burst(self):
-        """Execute final order submission burst"""
+        """Execute final order submission burst using verified submit selector"""
         submit_selectors = [
+            "[data-cy='oms-order-form-submit-button-buy']",
+            "button[data-cy='oms-order-form-submit-button-buy']",
             "[data-cy='order-submit-btn']",
-            "[data-cy='order-send-btn']",
-            "button[type='submit'].order-buy-btn",
             "button[data-cy='order-buy-btn']"
         ]
         
@@ -295,3 +418,19 @@ class EasyTraderAutomation:
 
             if attempt < self.config.schedule.max_attempts:
                 await asyncio.sleep(self.config.schedule.interval_ms / 1000.0)
+
+        # Post-submission check on order list
+        await asyncio.sleep(1.5)
+        await self.check_recent_order_status()
+
+    async def check_recent_order_status(self):
+        """Check order status inside order-list container"""
+        try:
+            alert = await self.page.query_selector("[data-cy='state-notification-alert']")
+            if alert:
+                alert_text = await alert.inner_text()
+                print(f"[!] Order List Alert: {alert_text or 'خطا در سفارش'}")
+            else:
+                print("[✓] No immediate order error detected in order list.")
+        except Exception:
+            pass

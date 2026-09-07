@@ -32,6 +32,11 @@ class AntiDetectionConfig:
     random_delay_max_ms: int
     human_mouse_movement: bool
 
+@dataclass
+class StorageConfig:
+    save_stocks_data: bool = True
+    output_dir: str = "./stocks_data"
+
 class Config:
     def __init__(self, config_path: str = "config.yaml"):
         if not os.path.exists(config_path):
@@ -44,3 +49,4 @@ class Config:
         self.order = OrderConfig(**data.get("order", {}))
         self.schedule = ScheduleConfig(**data.get("schedule", {}))
         self.anti_detection = AntiDetectionConfig(**data.get("anti_detection", {}))
+        self.storage = StorageConfig(**data.get("storage", {}))
