@@ -47,9 +47,9 @@ async def main():
         # Step 3: Prepare order/draft (symbol verification, max quantity, max ceiling price)
         await trader.prepare_order()
 
-        # Step 4: Wait for scheduled execution time if enabled, or execute immediately
+        # Step 4: Wait for scheduled execution time based on EasyTrader browser clock (#easy-clock-id)
         if config.schedule.enabled:
-            await PrecisionScheduler.wait_until(config.schedule.target_time)
+            await PrecisionScheduler.wait_until(config.schedule.target_time, page)
         else:
             print("[*] Scheduler disabled: executing action immediately...")
 
