@@ -63,45 +63,69 @@ class EasyTraderAutomation:
         await self.human_delay(0.5, 1.0)
 
     async def wait_for_login(self):
-        """Check user authentication status and wait for manual login if needed"""
+        """
+        Check user authentication status and wait for manual login if needed.
+        Guarantees that user has completely passed SSO login and is on the live dashboard.
+        """
         print("[*] Navigating to EasyTrader...")
         await self.page.goto(self.config.app.url, wait_until="domcontentloaded")
-        
         print("[*] Checking user authentication state...")
-        logged_in_selectors = [
-            "[data-cy='symbol-header-symbol-name']",
-            "[data-cy='order-form-header-symbol-name']",
-            "[data-cy='order-buy-btn']",
-            "[data-cy='market-depth-best-limit']",
-            "[data-cy='order-list-clock']"
-        ]
-        
-        is_logged_in = False
-        for _ in range(6):
-            for sel in logged_in_selectors:
-                if await self.page.query_selector(sel):
-                    is_logged_in = True
-                    break
-            if is_logged_in:
-                break
-            await asyncio.sleep(1)
 
-        if not is_logged_in:
-            print("=" * 60)
-            print("[!] No active session found. Please log in within the browser (Username, Password, 2FA SMS).")
-            print("[!] Once the dashboard loads, the bot will automatically resume execution.")
-            print("=" * 60)
-            
-            while True:
-                for sel in logged_in_selectors:
-                    if await self.page.query_selector(sel):
-                        is_logged_in = True
-                        break
-                if is_logged_in:
-                    break
+        # Wait 3 seconds for initial redirects (e.g. from d.easytrader.ir to login.emofid.com)
+        await asyncio.sleep(3)
+
+        while True:
+            current_url = self.page.url
+
+            # Detect if user is on Mofid SSO login or OAuth redirect callback
+            is_in_login_flow = (
+                "login.emofid.com" in current_url or
+                "auth-callback" in current_url or
+                "connect/authorize" in current_url
+            )
+
+            # Detect if user is actually on the active dashboard
+            is_dashboard_active = False
+            if not is_in_login_flow and "d.easytrader.ir" in current_url:
+                symbol_elem = await self.page.query_selector("[data-cy='symbol-header-symbol-name']")
+                buy_btn = await self.page.query_selector("button[data-cy='order-buy-btn']")
+                clock_elem = await self.page.query_selector("#easy-clock-id, [data-cy='order-list-clock']")
+
+                if symbol_elem and await symbol_elem.is_visible():
+                    is_dashboard_active = True
+                elif buy_btn and await buy_btn.is_visible():
+                    is_dashboard_active = True
+                elif clock_elem and await clock_elem.is_visible():
+                    is_dashboard_active = True
+
+            if is_dashboard_active:
+                print("[✓] User login confirmed successfully. Dashboard is fully loaded.")
                 await asyncio.sleep(2)
+                break
 
-        print("[✓] User login confirmed successfully.")
+            print("=" * 60)
+            clean_url = current_url.split("?")[0]
+            print(f"[!] Authentication required (Current URL: {clean_url})")
+            print("[!] Please enter your Username, Password, and 2FA SMS in the browser...")
+            print("[!] The bot is waiting and will automatically resume once you reach the dashboard.")
+            print("=" * 60)
+
+            # Poll until user completes login and reaches main dashboard
+            while True:
+                await asyncio.sleep(2)
+                curr = self.page.url
+                if ("login.emofid.com" not in curr and
+                    "auth-callback" not in curr and
+                    "d.easytrader.ir" in curr):
+                    
+                    sym = await self.page.query_selector("[data-cy='symbol-header-symbol-name']")
+                    btn = await self.page.query_selector("button[data-cy='order-buy-btn']")
+                    clk = await self.page.query_selector("#easy-clock-id, [data-cy='order-list-clock']")
+                    
+                    if (sym and await sym.is_visible()) or (btn and await btn.is_visible()) or (clk and await clk.is_visible()):
+                        print("[✓] User login confirmed successfully. Dashboard is fully loaded.")
+                        await asyncio.sleep(2)
+                        return
 
     async def get_server_clock(self) -> Optional[str]:
         """Read EasyTrader server clock (#easy-clock-id)"""
@@ -149,12 +173,9 @@ class EasyTraderAutomation:
     async def get_price_thresholds(self) -> Dict[str, Optional[int]]:
         """
         Extract daily floor and ceiling prices from candle chart and order form buttons
-        minPrice -> Daily Floor
-        maxPrice -> Daily Ceiling
         """
         prices = {"min": None, "max": None, "prev": None, "last": None, "closing": None}
         
-        # 1. From candle chart
         try:
             max_elem = await self.page.query_selector("[data-cy='symbol-detail-candle-max-price']")
             if max_elem:
@@ -178,7 +199,7 @@ class EasyTraderAutomation:
         except Exception as e:
             print(f"[!] Error reading candle prices: {e}")
 
-        # 2. Fallback or cross-check from order form max/min price buttons if open
+        # Fallback to order form max/min price if candle is not rendered yet
         if not prices["max"]:
             try:
                 form_max_elem = await self.page.query_selector("[data-cy='order-form-max-price'] span")
@@ -252,7 +273,7 @@ class EasyTraderAutomation:
         if not symbol_name:
             return None
 
-        # Clean symbol name from extra characters
+        # Clean symbol name from slashes
         symbol_name = symbol_name.replace("/", "-").strip()
 
         prices = await self.get_price_thresholds()
@@ -307,7 +328,6 @@ EasyTrader Server Clock: {server_clock}
             try:
                 current = await self.get_active_symbol_name()
                 if current and current != self.last_saved_symbol:
-                    # Give UI a brief moment to render depths & candle
                     await asyncio.sleep(0.8)
                     await self.save_symbol_info(current)
             except Exception:
@@ -329,14 +349,29 @@ EasyTrader Server Clock: {server_clock}
         print(f"[*] Target symbol: {target_symbol} | Currently active: {current_symbol}")
 
         if current_symbol != target_symbol:
-            print(f"[*] Searching for symbol: {target_symbol}...")
+            print(f"[*] Target symbol '{target_symbol}' is not currently active.")
+            print(f"[*] Attempting search for '{target_symbol}'...")
             search_selector = "[data-cy='quick-search-input'], input[placeholder*='جستجو']"
+            search_ok = False
             try:
-                await self.human_type(search_selector, target_symbol)
-                await self.page.keyboard.press("Enter")
-                await asyncio.sleep(1.5)
-            except Exception as e:
-                print(f"[!] Search error / timeout: {e}")
+                search_elem = await self.page.wait_for_selector(search_selector, timeout=4000)
+                if search_elem:
+                    await self.human_type(search_selector, target_symbol)
+                    await self.page.keyboard.press("Enter")
+                    await asyncio.sleep(1.5)
+                    search_ok = True
+            except Exception:
+                pass
+
+            if not search_ok:
+                print(f"[!] Tip: Please click or select '{target_symbol}' in EasyTrader now...")
+                # Wait up to 15 seconds for user to click target symbol
+                for _ in range(15):
+                    active = await self.get_active_symbol_name()
+                    if active == target_symbol:
+                        print(f"[✓] Target symbol '{target_symbol}' detected!")
+                        break
+                    await asyncio.sleep(1)
         else:
             print("[✓] Target symbol is already active on screen (skipping search step).")
 
