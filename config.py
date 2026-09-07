@@ -19,7 +19,7 @@ class OrderConfig:
     price: int
     use_ceiling_price: bool
     use_max_quantity: bool = True
-    action_type: str = "draft"  # "draft" (پیش‌نویس) or "send" (ارسال خرید)
+    action_type: str = "send"  # "send" or "draft"
 
 @dataclass
 class ScheduleConfig:
@@ -27,6 +27,10 @@ class ScheduleConfig:
     target_time: str
     max_attempts: int
     interval_ms: int
+    dynamic_ping_compensation: bool = True
+    ping_lookback_seconds: int = 30
+    ping_samples: int = 5
+    manual_offset_ms: int = 0
 
 @dataclass
 class AntiDetectionConfig:

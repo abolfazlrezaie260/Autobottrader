@@ -16,13 +16,20 @@ order:
   use_max_quantity: true   # Auto-select maximum allowable volume via [data-cy='order-form-max-quantity']
   price: 0                 # 0 to use maximum ceiling price
   use_ceiling_price: true  # Auto-select maximum ceiling price via [data-cy='order-form-max-price']
-  action_type: "draft"     # "draft" (ثبت پیش‌نویس) or "send" (ارسال مستقیم به هسته معاملات)
+  action_type: "send"      # "send" (شلیک به هسته معاملات) or "draft" (پیش‌نویس)
 
 schedule:
-  enabled: false           # If false, registers draft/order immediately; if true, waits for target_time
-  target_time: "08:44:59.850"
-  max_attempts: 1          # 1 attempt for draft
-  interval_ms: 250
+  enabled: true            # Enable high-precision server time scheduler
+  target_time: "08:45:00.000" # Target arrival time at broker server (HH:MM:SS.mmm)
+  
+  # === قابلیت محاسبه خودکار پینگ و تصحیح دینامیک تایم شلیک ===
+  dynamic_ping_compensation: true # Automatically measure network RTT and shift trigger time
+  ping_lookback_seconds: 30       # Start ping calibration 30s before target time
+  ping_samples: 5                 # Number of ping samples to average/median
+  manual_offset_ms: 0             # Additional manual fine-tuning offset in ms (optional)
+
+  max_attempts: 5          # Number of burst submission attempts
+  interval_ms: 200         # Interval between burst attempts in milliseconds
 
 anti_detection:
   random_delay_min_ms: 60
