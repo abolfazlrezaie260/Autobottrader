@@ -32,11 +32,12 @@ async def main():
         sys.exit(1)
 
     browser_mgr = BrowserManager(config)
+    trader = None
     try:
         page = await browser_mgr.initialize()
         trader = EasyTraderAutomation(page, config)
 
-        # Step 1: Ensure user is authenticated
+        # Step 1: Ensure user is authenticated (loads session_state.json automatically)
         await trader.wait_for_login()
 
         # Step 2: Start background stock watcher (auto-saves any opened stock to text file)
@@ -64,6 +65,11 @@ async def main():
     except Exception as e:
         print(f"\n[X] Unexpected error: {e}")
     finally:
+        if trader:
+            try:
+                await trader.save_session_state()
+            except Exception:
+                pass
         await browser_mgr.close()
 
 if __name__ == "__main__":

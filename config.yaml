@@ -2,9 +2,9 @@
 app:
   url: "https://d.easytrader.ir"
   # Browser connection mode:
+  # - persistent: Automatically launch Chrome and persist session & profile locally
   # - cdp: Connect to existing browser running with --remote-debugging-port=9222
-  # - persistent: Launch Chrome with dedicated local profile
-  connection_mode: "cdp"
+  connection_mode: "persistent"
   user_data_dir: "./browser_profile"
   cdp_endpoint: "http://127.0.0.1:9222"
   headless: false

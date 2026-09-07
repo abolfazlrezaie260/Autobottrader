@@ -13,11 +13,14 @@ if "PLAYWRIGHT_NODEJS_PATH" not in os.environ:
             os.environ["PLAYWRIGHT_NODEJS_PATH"] = np
             break
 
+import json
 import random
 import asyncio
 from typing import Optional
 from playwright.async_api import async_playwright, BrowserContext, Page
 from config import Config
+
+SESSION_STATE_FILE = "session_state.json"
 
 # Stealth script to evade bot detection (Anti-Fingerprinting)
 STEALTH_JS = """
@@ -62,7 +65,7 @@ class BrowserManager:
         self.page: Optional[Page] = None
 
     async def _launch_persistent(self) -> BrowserContext:
-        """Launch system Chrome directly with persistent user directory"""
+        """Launch system Chrome directly with persistent user directory and saved session state"""
         profile_dir = os.path.abspath(self.config.app.user_data_dir)
         os.makedirs(profile_dir, exist_ok=True)
         print(f"[+] Launching browser with persistent profile at: {profile_dir}")
@@ -83,6 +86,11 @@ class BrowserManager:
             "ignore_default_args": ["--enable-automation"]
         }
 
+        # Restore saved cookies and localStorage tokens if available
+        if os.path.exists(SESSION_STATE_FILE):
+            print(f"[✓] Loading saved session tokens from '{SESSION_STATE_FILE}'")
+            launch_kwargs["storage_state"] = SESSION_STATE_FILE
+
         if chrome_exec:
             print(f"[✓] Auto-detected installed system browser: {chrome_exec}")
             launch_kwargs["executable_path"] = chrome_exec
@@ -92,7 +100,7 @@ class BrowserManager:
         return await self.playwright.chromium.launch_persistent_context(**launch_kwargs)
 
     async def initialize(self) -> Page:
-        """Initialize browser with persistent context or connect over CDP with fallback"""
+        """Initialize browser with persistent context or connect over CDP with automatic fallback"""
         self.playwright = await async_playwright().start()
 
         if self.config.app.connection_mode == "cdp":
@@ -103,7 +111,7 @@ class BrowserManager:
                 self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
             except Exception as e:
                 print(f"[!] CDP connection refused on {self.config.app.cdp_endpoint} ({e})")
-                print("[*] Chrome with --remote-debugging-port=9222 was not found.")
+                print("[*] Chrome with --remote-debugging-port=9222 was not running.")
                 print("[*] Automatically launching system Chrome directly...")
                 self.context = await self._launch_persistent()
                 self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
@@ -117,6 +125,11 @@ class BrowserManager:
 
     async def close(self):
         if self.context:
+            try:
+                # Save latest state before closing
+                await self.context.storage_state(path=SESSION_STATE_FILE)
+            except Exception:
+                pass
             await self.context.close()
         if self.playwright:
             await self.playwright.stop()

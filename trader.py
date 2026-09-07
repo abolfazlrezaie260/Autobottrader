@@ -7,6 +7,8 @@ from typing import Optional, Dict, Any
 from playwright.async_api import Page
 from config import Config
 
+SESSION_STATE_FILE = "session_state.json"
+
 def parse_number(text: Optional[str]) -> Optional[int]:
     """Parse comma-separated or Persian/English numeral string to integer"""
     if not text:
@@ -19,8 +21,8 @@ def parse_number(text: Optional[str]) -> Optional[int]:
 
 class EasyTraderAutomation:
     """
-    Manages interactions, symbol monitoring, data logging, and order execution
-    on Mofid EasyTrader based on verified DOM attributes.
+    Manages interactions, symbol monitoring, data logging, session persistence,
+    and order execution on Mofid EasyTrader based on verified DOM attributes.
     """
     def __init__(self, page: Page, config: Config):
         self.page = page
@@ -62,10 +64,19 @@ class EasyTraderAutomation:
             await self.page.keyboard.type(char, delay=random.randint(35, 95))
         await self.human_delay(0.5, 1.0)
 
+    async def save_session_state(self):
+        """Export current cookies and localStorage to session_state.json for permanent reuse"""
+        try:
+            await self.page.context.storage_state(path=SESSION_STATE_FILE)
+            print(f"[✓] Session state (cookies & auth tokens) saved to '{SESSION_STATE_FILE}'")
+        except Exception as e:
+            print(f"[!] Warning: Could not export session state: {e}")
+
     async def wait_for_login(self):
         """
         Check user authentication status and wait for manual login if needed.
         Guarantees that user has completely passed SSO login and is on the live dashboard.
+        Saves session_state.json immediately upon successful verification.
         """
         print("[*] Navigating to EasyTrader...")
         await self.page.goto(self.config.app.url, wait_until="domcontentloaded")
@@ -77,14 +88,14 @@ class EasyTraderAutomation:
         while True:
             current_url = self.page.url
 
-            # Detect if user is on Mofid SSO login or OAuth redirect callback
+            # Detect if user is in Mofid SSO login or OAuth redirect callback
             is_in_login_flow = (
                 "login.emofid.com" in current_url or
                 "auth-callback" in current_url or
                 "connect/authorize" in current_url
             )
 
-            # Detect if user is actually on the active dashboard
+            # Detect if user is on the active dashboard
             is_dashboard_active = False
             if not is_in_login_flow and "d.easytrader.ir" in current_url:
                 symbol_elem = await self.page.query_selector("[data-cy='symbol-header-symbol-name']")
@@ -100,7 +111,9 @@ class EasyTraderAutomation:
 
             if is_dashboard_active:
                 print("[✓] User login confirmed successfully. Dashboard is fully loaded.")
-                await asyncio.sleep(2)
+                # Save session immediately to file
+                await self.save_session_state()
+                await asyncio.sleep(1.5)
                 break
 
             print("=" * 60)
@@ -124,7 +137,9 @@ class EasyTraderAutomation:
                     
                     if (sym and await sym.is_visible()) or (btn and await btn.is_visible()) or (clk and await clk.is_visible()):
                         print("[✓] User login confirmed successfully. Dashboard is fully loaded.")
-                        await asyncio.sleep(2)
+                        # Save session immediately to file
+                        await self.save_session_state()
+                        await asyncio.sleep(1.5)
                         return
 
     async def get_server_clock(self) -> Optional[str]:
@@ -171,9 +186,7 @@ class EasyTraderAutomation:
         return None
 
     async def get_price_thresholds(self) -> Dict[str, Optional[int]]:
-        """
-        Extract daily floor and ceiling prices from candle chart and order form buttons
-        """
+        """Extract daily floor and ceiling prices from candle chart and order form buttons"""
         prices = {"min": None, "max": None, "prev": None, "last": None, "closing": None}
         
         try:
@@ -199,7 +212,7 @@ class EasyTraderAutomation:
         except Exception as e:
             print(f"[!] Error reading candle prices: {e}")
 
-        # Fallback to order form max/min price if candle is not rendered yet
+        # Fallback to order form max/min price buttons if open
         if not prices["max"]:
             try:
                 form_max_elem = await self.page.query_selector("[data-cy='order-form-max-price'] span")
@@ -365,7 +378,6 @@ EasyTrader Server Clock: {server_clock}
 
             if not search_ok:
                 print(f"[!] Tip: Please click or select '{target_symbol}' in EasyTrader now...")
-                # Wait up to 15 seconds for user to click target symbol
                 for _ in range(15):
                     active = await self.get_active_symbol_name()
                     if active == target_symbol:
