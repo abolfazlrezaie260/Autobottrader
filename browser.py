@@ -5,13 +5,13 @@ from typing import Optional
 from playwright.async_api import async_playwright, BrowserContext, Page
 from config import Config
 
-# اسکریپت خنثی‌سازی تشخیص خودکارسازی مرورگر (Anti-Fingerprinting / Stealth)
+# Stealth script to evade bot detection (Anti-Fingerprinting)
 STEALTH_JS = """
 Object.defineProperty(navigator, 'webdriver', {
     get: () => undefined
 });
 
-// شبیه‌سازی زبان‌ها و سیستم‌عامل
+// Mock languages and Chrome runtime object
 Object.defineProperty(navigator, 'languages', {
     get: () => ['fa-IR', 'fa', 'en-US', 'en']
 });
@@ -34,7 +34,7 @@ KNOWN_CHROME_PATHS = [
 ]
 
 def find_system_chrome() -> Optional[str]:
-    """یافتن خودکار مسیر مرورگر کروم یا کرومیوم نصب‌شده روی مک"""
+    """Find installed Google Chrome or Chromium browser executable on macOS"""
     for path in KNOWN_CHROME_PATHS:
         if os.path.exists(path):
             return path
@@ -48,18 +48,18 @@ class BrowserManager:
         self.page: Optional[Page] = None
 
     async def initialize(self) -> Page:
-        """راه‌اندازی مرورگر بر اساس پروفایل دائمی یا CDP جهت حفظ لاگین کاربر"""
+        """Initialize browser with persistent context or connect over CDP"""
         self.playwright = await async_playwright().start()
 
         if self.config.app.connection_mode == "cdp":
-            print(f"[+] اتصال به مرورگر در حال اجرا از طریق CDP: {self.config.app.cdp_endpoint}")
+            print(f"[+] Connecting to existing browser over CDP: {self.config.app.cdp_endpoint}")
             browser = await self.playwright.chromium.connect_over_cdp(self.config.app.cdp_endpoint)
             self.context = browser.contexts[0] if browser.contexts else await browser.new_context()
             self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
         else:
             profile_dir = os.path.abspath(self.config.app.user_data_dir)
             os.makedirs(profile_dir, exist_ok=True)
-            print(f"[+] راه‌اندازی مرورگر با پروفایل دائمی در: {profile_dir}")
+            print(f"[+] Launching browser with persistent profile at: {profile_dir}")
 
             args = [
                 "--disable-blink-features=AutomationControlled",
@@ -68,7 +68,6 @@ class BrowserManager:
                 "--start-maximized"
             ]
 
-            # بررسی وجود کروم سیستم برای بی‌نیازی از دانلود کرومیوم پلی‌رایت
             chrome_exec = find_system_chrome()
             launch_kwargs = {
                 "user_data_dir": profile_dir,
@@ -79,7 +78,7 @@ class BrowserManager:
             }
 
             if chrome_exec:
-                print(f"[✓] استفاده خودکار از مرورگر نصب‌شده روی مک: {chrome_exec}")
+                print(f"[✓] Auto-detected installed system browser: {chrome_exec}")
                 launch_kwargs["executable_path"] = chrome_exec
             else:
                 launch_kwargs["channel"] = "chrome"
@@ -87,7 +86,7 @@ class BrowserManager:
             self.context = await self.playwright.chromium.launch_persistent_context(**launch_kwargs)
             self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
 
-        # اعمال اسکریپت Stealth روی صفحه
+        # Inject stealth evasions into page
         await self.page.add_init_script(STEALTH_JS)
         return self.page
 

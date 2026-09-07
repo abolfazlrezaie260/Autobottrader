@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta
 class PrecisionScheduler:
     @staticmethod
     def parse_target_time(target_str: str) -> datetime:
-        """تبدیل رشته زمان HH:MM:SS.mmm به datetime مربوط به امروز"""
+        """Convert HH:MM:SS.mmm target time string to a datetime for today or tomorrow"""
         now = datetime.now()
         parts = target_str.strip().split(".")
         time_parts = parts[0].split(":")
@@ -16,22 +16,21 @@ class PrecisionScheduler:
         
         target = now.replace(hour=hour, minute=minute, second=second, microsecond=microsecond)
         if target < now:
-            # اگر زمان امروز گذشته باشد، برای فردا تنظیم می‌شود
             target += timedelta(days=1)
         return target
 
     @classmethod
     async def wait_until(cls, target_str: str):
-        """انتظار با دقت بالا تا رسیدن به زمان هدف"""
+        """Wait with high precision until the target timestamp arrives"""
         target_dt = cls.parse_target_time(target_str)
-        print(f"[+] زمان‌بندی فعال شد. زمان هدف: {target_dt.strftime('%H:%M:%S.%f')[:-3]}")
+        print(f"[+] Scheduler armed. Target execution time: {target_dt.strftime('%H:%M:%S.%f')[:-3]}")
         
         while True:
             now = datetime.now()
             diff = (target_dt - now).total_seconds()
             
             if diff <= 0:
-                print(f"[!] زمان فرارسید! ساعت فعلی: {now.strftime('%H:%M:%S.%f')[:-3]}")
+                print(f"[!] Target time reached! Current time: {now.strftime('%H:%M:%S.%f')[:-3]}")
                 break
             
             if diff > 1.0:
@@ -39,5 +38,5 @@ class PrecisionScheduler:
             elif diff > 0.05:
                 await asyncio.sleep(0.01)
             else:
-                # Busy wait در ۵۰ میلی‌ثانیه پایانی برای دستیابی به حداکثر دقت
+                # Busy-wait during the last 50 milliseconds for sub-millisecond precision
                 pass

@@ -7,13 +7,13 @@ from trader import EasyTraderAutomation
 
 async def main():
     print("=" * 60)
-    print("      Autobottrader - ربات خودکارساز معاملات ایزیتریدر مفید      ")
+    print("      Autobottrader - Mofid EasyTrader Automation Bot      ")
     print("=" * 60)
 
     try:
         config = Config("config.yaml")
     except Exception as e:
-        print(f"[x] خطا در بارگذاری پیکربندی: {e}")
+        print(f"[X] Error loading configuration: {e}")
         sys.exit(1)
 
     browser_mgr = BrowserManager(config)
@@ -21,28 +21,28 @@ async def main():
         page = await browser_mgr.initialize()
         trader = EasyTraderAutomation(page, config)
 
-        # مرحله اول: اطمینان از لاگین بودن کاربر
+        # Step 1: Ensure user is authenticated
         await trader.wait_for_login()
 
-        # مرحله دوم: آماده‌سازی اولیه سفارش (ورود نماد، حجم و قیمت)
+        # Step 2: Prepare order (symbol check, quantity, price)
         await trader.prepare_order()
 
-        # مرحله سوم: در صورت فعال بودن زمان‌بندی، انتظار تا زمان دقیق سرور
+        # Step 3: Wait for scheduled execution time if enabled
         if config.schedule.enabled:
             await PrecisionScheduler.wait_until(config.schedule.target_time)
 
-        # مرحله چهارم: شلیک و ارسال سفارش
+        # Step 4: Fire burst order submission
         await trader.execute_order_burst()
 
-        print("\n[✓] عملیات با موفقیت به پایان رسید.")
-        print("[*] برای بررسی وضعیت سفارش، مرورگر باز می‌ماند (برای خروج Ctrl+C بزنید)...")
+        print("\n[✓] Automation completed successfully.")
+        print("[*] Browser will remain open to monitor order status (Press Ctrl+C to exit)...")
         while True:
             await asyncio.sleep(1)
 
     except KeyboardInterrupt:
-        print("\n[!] توقف برنامه توسط کاربر.")
+        print("\n[!] Execution stopped by user.")
     except Exception as e:
-        print(f"\n[x] خطای پیش‌بینی نشده: {e}")
+        print(f"\n[X] Unexpected error: {e}")
     finally:
         await browser_mgr.close()
 
