@@ -22,7 +22,7 @@ def parse_number(text: Optional[str]) -> Optional[int]:
 class EasyTraderAutomation:
     """
     Manages interactions, symbol monitoring, data logging, session persistence,
-    and order execution on Mofid EasyTrader based on verified DOM attributes.
+    and order/draft execution on Mofid EasyTrader based on verified DOM attributes.
     """
     def __init__(self, page: Page, config: Config):
         self.page = page
@@ -111,7 +111,6 @@ class EasyTraderAutomation:
 
             if is_dashboard_active:
                 print("[✓] User login confirmed successfully. Dashboard is fully loaded.")
-                # Save session immediately to file
                 await self.save_session_state()
                 await asyncio.sleep(1.5)
                 break
@@ -137,7 +136,6 @@ class EasyTraderAutomation:
                     
                     if (sym and await sym.is_visible()) or (btn and await btn.is_visible()) or (clk and await clk.is_visible()):
                         print("[✓] User login confirmed successfully. Dashboard is fully loaded.")
-                        # Save session immediately to file
                         await self.save_session_state()
                         await asyncio.sleep(1.5)
                         return
@@ -286,7 +284,6 @@ class EasyTraderAutomation:
         if not symbol_name:
             return None
 
-        # Clean symbol name from slashes
         symbol_name = symbol_name.replace("/", "-").strip()
 
         prices = await self.get_price_thresholds()
@@ -350,11 +347,11 @@ EasyTrader Server Clock: {server_clock}
     async def prepare_order(self):
         """
         Prepare order form with verified selectors:
-        1. Check/verify active symbol
+        1. Check/verify active symbol (e.g. کرازی)
         2. Save symbol data to text file
         3. Open order form if closed
-        4. Populate quantity via [data-cy='order-form-input-quantity'] or #quantity
-        5. Populate price or click [data-cy='order-form-max-price'] for ceiling
+        4. Populate quantity (either max allowable quantity via [data-cy='order-form-max-quantity'] or fixed value)
+        5. Populate price (either ceiling price via [data-cy='order-form-max-price'] or fixed value)
         """
         target_symbol = self.config.order.symbol.strip()
         current_symbol = await self.get_active_symbol_name()
@@ -408,21 +405,35 @@ EasyTrader Server Clock: {server_clock}
             await self.human_click(order_btn_selector)
             await asyncio.sleep(0.5)
 
-        # Fill order volume/quantity using verified selector
-        try:
-            await self.human_type(quantity_input_sel, str(self.config.order.quantity))
-            print(f"[✓] Order quantity populated: {self.config.order.quantity}")
-        except Exception as e:
-            print(f"[!] Quantity input field not found: {e}")
+        # 1. Fill order volume / quantity (Support for Maximum Proposed/Allowable Volume)
+        if self.config.order.use_max_quantity or self.config.order.quantity <= 0:
+            max_qty_sel = "[data-cy='order-form-max-quantity']"
+            max_qty_btn = await self.page.query_selector(max_qty_sel)
+            if max_qty_btn:
+                qty_text = await max_qty_btn.inner_text()
+                print(f"[*] Selecting maximum allowable quantity via '{max_qty_sel}'...")
+                await self.human_click(max_qty_sel)
+                print(f"[✓] Maximum quantity selected: {qty_text.strip()}")
+            else:
+                print("[!] Max quantity button not found, checking input field.")
+                if self.config.order.quantity > 0:
+                    await self.human_type(quantity_input_sel, str(self.config.order.quantity))
+        else:
+            try:
+                await self.human_type(quantity_input_sel, str(self.config.order.quantity))
+                print(f"[✓] Order quantity populated: {self.config.order.quantity}")
+            except Exception as e:
+                print(f"[!] Quantity input field not found: {e}")
 
-        # Set price: If use_ceiling_price is true, try clicking max-price button or type ceiling
-        if self.config.order.use_ceiling_price:
+        # 2. Fill order price (Support for Maximum Proposed/Ceiling Price)
+        if self.config.order.use_ceiling_price or self.config.order.price <= 0:
             max_btn_sel = "[data-cy='order-form-max-price']"
             max_btn = await self.page.query_selector(max_btn_sel)
             if max_btn:
-                print("[*] Clicking auto max price button [data-cy='order-form-max-price']...")
+                price_text = await max_btn.inner_text()
+                print(f"[*] Selecting maximum ceiling price via '{max_btn_sel}'...")
                 await self.human_click(max_btn_sel)
-                print("[✓] Ceiling price selected via max price button.")
+                print(f"[✓] Maximum ceiling price selected: {price_text.strip()}")
             elif thresholds["max"]:
                 price_input_sel = "[data-cy='order-form-input-price'], #price"
                 await self.human_type(price_input_sel, str(thresholds["max"]))
@@ -434,10 +445,42 @@ EasyTrader Server Clock: {server_clock}
 
         # Save again to capture updated order form summary/assets
         await self.save_symbol_info(target_symbol)
-        print("[✓] Order form prepared and armed for execution at target time.")
+        print(f"[✓] Order form prepared for {self.config.order.action_type.upper()} on symbol '{target_symbol}'.")
 
     async def execute_order_burst(self):
-        """Execute final order submission burst using verified submit selector"""
+        """
+        Execute order submission or save as Draft (پیش‌نویس) based on config.order.action_type
+        """
+        is_draft = self.config.order.action_type.lower() == "draft"
+
+        if is_draft:
+            print(f"[*] Registering DRAFT (پیش‌نویس) for {self.config.order.symbol}...")
+            draft_selectors = [
+                "[data-cy='oms-order-form-draft-button-buy']",
+                "button[data-cy='oms-order-form-draft-button-buy']",
+                "[data-cy='oms-order-form-draft-button-sell']",
+                "button[data-cy*='draft-button']"
+            ]
+            clicked = False
+            for sel in draft_selectors:
+                try:
+                    btn = await self.page.query_selector(sel)
+                    if btn and await btn.is_visible():
+                        await self.human_click(sel)
+                        print(f"[✓] Draft order registered successfully via '{sel}'.")
+                        clicked = True
+                        break
+                except Exception as e:
+                    print(f"[!] Error clicking draft button '{sel}': {e}")
+
+            if not clicked:
+                print("[!] Draft button not found in order form.")
+
+            await asyncio.sleep(1.5)
+            await self.check_recent_order_status()
+            return
+
+        # Regular buy order execution
         submit_selectors = [
             "[data-cy='oms-order-form-submit-button-buy']",
             "button[data-cy='oms-order-form-submit-button-buy']",
@@ -478,6 +521,6 @@ EasyTrader Server Clock: {server_clock}
                 alert_text = await alert.inner_text()
                 print(f"[!] Order List Alert: {alert_text or 'خطا در سفارش'}")
             else:
-                print("[✓] No immediate order error detected in order list.")
+                print("[✓] Action executed successfully. No errors detected in order list.")
         except Exception:
             pass

@@ -44,17 +44,20 @@ async def main():
         if config.storage.save_stocks_data:
             asyncio.create_task(trader.watch_symbols_task())
 
-        # Step 3: Prepare order (symbol verification, quantity, ceiling price)
+        # Step 3: Prepare order/draft (symbol verification, max quantity, max ceiling price)
         await trader.prepare_order()
 
-        # Step 4: Wait for scheduled execution time if enabled
+        # Step 4: Wait for scheduled execution time if enabled, or execute immediately
         if config.schedule.enabled:
             await PrecisionScheduler.wait_until(config.schedule.target_time)
+        else:
+            print("[*] Scheduler disabled: executing action immediately...")
 
-        # Step 5: Fire burst order submission
+        # Step 5: Execute action (Draft registration or burst order submission)
         await trader.execute_order_burst()
 
-        print("\n[✓] Automation and order routine finished.")
+        action_name = "Draft registration" if config.order.action_type.lower() == "draft" else "Order execution"
+        print(f"\n[✓] {action_name} finished successfully.")
         print("[*] Stock watcher is running. Any stock you click will be logged to stocks_data/")
         print("[*] Browser will remain open (Press Ctrl+C to exit)...")
         while True:

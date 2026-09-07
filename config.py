@@ -18,6 +18,8 @@ class OrderConfig:
     quantity: int
     price: int
     use_ceiling_price: bool
+    use_max_quantity: bool = True
+    action_type: str = "draft"  # "draft" (پیش‌نویس) or "send" (ارسال خرید)
 
 @dataclass
 class ScheduleConfig:

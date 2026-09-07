@@ -10,17 +10,18 @@ app:
   headless: false
 
 order:
-  symbol: "داروند"          # Target stock symbol (e.g. داروند, لبن, فولاد, شپنا)
+  symbol: "کرازی"          # Target stock symbol (نماد کرازی)
   side: "buy"              # buy or sell
-  quantity: 1000           # Order volume
-  price: 0                 # 0 for automatic ceiling / max price
-  use_ceiling_price: true  # Auto click or populate ceiling price
+  quantity: 0              # 0 to use maximum allowable volume
+  use_max_quantity: true   # Auto-select maximum allowable volume via [data-cy='order-form-max-quantity']
+  price: 0                 # 0 to use maximum ceiling price
+  use_ceiling_price: true  # Auto-select maximum ceiling price via [data-cy='order-form-max-price']
+  action_type: "draft"     # "draft" (ثبت پیش‌نویس) or "send" (ارسال مستقیم به هسته معاملات)
 
 schedule:
-  enabled: true
-  # Target execution time (HH:MM:SS.mmm)
+  enabled: false           # If false, registers draft/order immediately; if true, waits for target_time
   target_time: "08:44:59.850"
-  max_attempts: 5
+  max_attempts: 1          # 1 attempt for draft
   interval_ms: 250
 
 anti_detection:
