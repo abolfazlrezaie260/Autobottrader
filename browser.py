@@ -61,43 +61,54 @@ class BrowserManager:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
 
+    async def _launch_persistent(self) -> BrowserContext:
+        """Launch system Chrome directly with persistent user directory"""
+        profile_dir = os.path.abspath(self.config.app.user_data_dir)
+        os.makedirs(profile_dir, exist_ok=True)
+        print(f"[+] Launching browser with persistent profile at: {profile_dir}")
+
+        args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-infobars",
+            "--start-maximized"
+        ]
+
+        chrome_exec = find_system_chrome()
+        launch_kwargs = {
+            "user_data_dir": profile_dir,
+            "headless": self.config.app.headless,
+            "args": args,
+            "viewport": None,
+            "ignore_default_args": ["--enable-automation"]
+        }
+
+        if chrome_exec:
+            print(f"[✓] Auto-detected installed system browser: {chrome_exec}")
+            launch_kwargs["executable_path"] = chrome_exec
+        else:
+            launch_kwargs["channel"] = "chrome"
+
+        return await self.playwright.chromium.launch_persistent_context(**launch_kwargs)
+
     async def initialize(self) -> Page:
-        """Initialize browser with persistent context or connect over CDP"""
+        """Initialize browser with persistent context or connect over CDP with fallback"""
         self.playwright = await async_playwright().start()
 
         if self.config.app.connection_mode == "cdp":
             print(f"[+] Connecting to existing browser over CDP: {self.config.app.cdp_endpoint}")
-            browser = await self.playwright.chromium.connect_over_cdp(self.config.app.cdp_endpoint)
-            self.context = browser.contexts[0] if browser.contexts else await browser.new_context()
-            self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+            try:
+                browser = await self.playwright.chromium.connect_over_cdp(self.config.app.cdp_endpoint)
+                self.context = browser.contexts[0] if browser.contexts else await browser.new_context()
+                self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+            except Exception as e:
+                print(f"[!] CDP connection refused on {self.config.app.cdp_endpoint} ({e})")
+                print("[*] Chrome with --remote-debugging-port=9222 was not found.")
+                print("[*] Automatically launching system Chrome directly...")
+                self.context = await self._launch_persistent()
+                self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
         else:
-            profile_dir = os.path.abspath(self.config.app.user_data_dir)
-            os.makedirs(profile_dir, exist_ok=True)
-            print(f"[+] Launching browser with persistent profile at: {profile_dir}")
-
-            args = [
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-infobars",
-                "--start-maximized"
-            ]
-
-            chrome_exec = find_system_chrome()
-            launch_kwargs = {
-                "user_data_dir": profile_dir,
-                "headless": self.config.app.headless,
-                "args": args,
-                "viewport": None,
-                "ignore_default_args": ["--enable-automation"]
-            }
-
-            if chrome_exec:
-                print(f"[✓] Auto-detected installed system browser: {chrome_exec}")
-                launch_kwargs["executable_path"] = chrome_exec
-            else:
-                launch_kwargs["channel"] = "chrome"
-
-            self.context = await self.playwright.chromium.launch_persistent_context(**launch_kwargs)
+            self.context = await self._launch_persistent()
             self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
 
         # Inject stealth evasions into page
