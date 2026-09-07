@@ -1,4 +1,18 @@
 import os
+import shutil
+
+# Ensure PLAYWRIGHT_NODEJS_PATH points to system Node.js on macOS
+if "PLAYWRIGHT_NODEJS_PATH" not in os.environ:
+    candidate_node_paths = [
+        shutil.which("node"),
+        "/opt/homebrew/bin/node",
+        "/usr/local/bin/node",
+    ]
+    for np in candidate_node_paths:
+        if np and os.path.exists(np):
+            os.environ["PLAYWRIGHT_NODEJS_PATH"] = np
+            break
+
 import random
 import asyncio
 from typing import Optional

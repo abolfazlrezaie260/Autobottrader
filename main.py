@@ -1,5 +1,20 @@
-import asyncio
+import os
+import shutil
 import sys
+
+# Automatically set PLAYWRIGHT_NODEJS_PATH to system Node.js on macOS to avoid dyld crash
+if "PLAYWRIGHT_NODEJS_PATH" not in os.environ:
+    candidate_node_paths = [
+        shutil.which("node"),
+        "/opt/homebrew/bin/node",
+        "/usr/local/bin/node",
+    ]
+    for np in candidate_node_paths:
+        if np and os.path.exists(np):
+            os.environ["PLAYWRIGHT_NODEJS_PATH"] = np
+            break
+
+import asyncio
 from config import Config
 from browser import BrowserManager
 from scheduler import PrecisionScheduler
