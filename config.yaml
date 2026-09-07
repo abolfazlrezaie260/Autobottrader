@@ -1,0 +1,30 @@
+# پیکربندی بات معاملاتی ایزیتریدر
+app:
+  url: "https://d.easytrader.ir"
+  # نحوه اتصال مرورگر:
+  # - persistent: اجرای مستقیم کروم با پوشه پروفایل اختصاصی جهت ذخیره سشن و توکن ورود
+  # - cdp: اتصال به مرورگر از قبل باز شده با سوئیچ remote-debugging-port
+  connection_mode: "persistent"
+  user_data_dir: "./browser_profile"
+  cdp_endpoint: "http://127.0.0.1:9222"
+  headless: false
+
+order:
+  symbol: "داروند"          # نماد مورد نظر
+  side: "buy"              # buy یا sell
+  quantity: 1000           # حجم سفارش
+  price: 0                 # قیمت سفارش (0 به معنی سقف قیمت یا قیمت فعلی)
+  use_ceiling_price: true  # استفاده از سقف قیمت آستانه (برای سرخطی و عرضه اولیه)
+
+schedule:
+  enabled: true
+  # زمان شروع ارسال سفارش به وقت محلی با دقت میلی‌ثانیه (HH:MM:SS.mmm)
+  target_time: "08:44:59.850"
+  # تعداد تکرار یا تلاش مجدد در صورت نیاز
+  max_attempts: 5
+  interval_ms: 250
+
+anti_detection:
+  random_delay_min_ms: 60
+  random_delay_max_ms: 180
+  human_mouse_movement: true

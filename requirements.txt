@@ -1,0 +1,4 @@
+playwright>=1.40.0
+pyyaml>=6.0.1
+python-dateutil>=2.8.2
+colorama>=0.4.6

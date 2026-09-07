@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Browser & Session data
+browser_profile/
+*.session
+*.log
+cookies.json
+storage_state.json
+
+# Environment & Config overrides
+.env
+config.local.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
